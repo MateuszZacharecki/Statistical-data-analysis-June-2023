@@ -1,0 +1,271 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+#Potrzebne biblioteki
+library(ggplot2)
+library(glmnet)
+library(caret)
+library(randomForest)
+library(ranger)
+library(Metrics)
+```
+
+```{r}
+X_train <- read.csv(file="X_train.csv", sep=",", header=T)
+y_train <- read.csv(file="y_train.csv", sep=",", header=T)
+X_test <- read.csv(file="X_test.csv", sep=",", header=T)
+
+```
+
+```{r}
+# Skalowanie danych
+sd_train <- lapply(X_train, sd)
+skal_train <- X_train/sd_train
+skal_test <- X_test/sd_train
+
+```
+
+```{r}
+# Elastic Net jest regularyzowaną regresją, która jest kombinacją liniową kar z modeli lasso i ridge
+# Estymowanym parametrem jest beta, estymuje się ją za pomocą wzoru:
+# $\widehat{\beta} = argmin_{\beta} (||y-X\beta||^2 + \lambda_2 ||\beta||^2 + \lambda ||\beta||_1)$
+# optymaizowana funkcja to:
+# $L(\widehat{\beta}) = \frac{1}{2n} \sum_{i=1}^n (y_i - x_i'\widehat{\beta})^2 + \lambda (\frac{1-\alpha}{2} \sum_{j=1}^m \widehat{\beta}_j^2 + \alpha \sum_{j=1}^m |\widehat{\beta}_j|)$
+# n to liczba obserwacji poddawanych predykcji, m to liczba predyktorów, X to zmienne objaśniające, Y to zmienna objaśniana
+# Hiperparametry to alpha i lambda
+# Model ridge dostajemy dla alpha=0, podczas gdy lasso otrzymujemy dla alpha=1
+
+```
+
+```{r}
+# Punkty 2 i 3 testowałem dla kroswalidacji z podziałem na 3, 5, 7 i 10 podzbiorów. Najlepsze rezultaty dla wybranych w siatkach modeli otrzymywałem dla podziału na 7 podzbiorów dla elastic net oraz dla podziału na 10 podzbiorów dla random forest. Ostatecznie o wyborze podziału na 7 podzbiorów zadecydowała róznica między błędami walidacyjnymi, najlepszy elastic net dla 10 podzbiorów okazał się mieć błąd walidacyjny o prawie 0.01 większy niż najlepszy elastic net dla 7 podzbiorów. Tymczasem błąd walidacyjny najlepszego random forest dla 7 podzbiorów był zaledwie o około 0.005 wyższy niż błąd walidacyjny dla najlepszego random forest dla 10 podzbiorów, więc róznica była znacznie mniejsza. Testowanie podziału na 3,5,7,10 podzbiorów wydało się być rozsądne ze względu na czas trenowania modeli, w szczególności random forest.
+
+```
+
+```{r}
+# Przygotowanie foldów (k=7)
+folds7 <- createFolds(y_train$Expected, 7, returnTrain = TRUE)
+cv_7 = trainControl(method = "cv", number = 7, index = folds7)
+
+```
+
+```{r}
+# Elastic net dla alpha = 0, 0.1, 0.2, ..., 1 oraz lambda = 0, 0.1, 0.2, ..., 1, kroswalidacja z podziałem na 7 zbiorów
+elastic_net7 = train(skal_train, y_train$Expected, method = "glmnet", tuneGrid = expand.grid(alpha=seq(0,1,length=11), lambda = seq(0,1,length=11)), trControl = cv_7)
+
+```
+
+```{r}
+elastic_net7
+
+```
+
+```{r}
+# wyznaczam błąd treningowy dla wybranego w siatce najlepszego modelu (alpha = 0.1, lambda = 0.2), dla cv=7
+RMSE_EN7 <- list()
+
+for (i in folds7){
+  prediction <- predict(elastic_net7, skal_train[i,])
+  trainRMSE <- sqrt(mean((y_train[i,]$Expected - prediction)^2))
+  key <- toString(i)
+  RMSE_EN7[[key]] <- trainRMSE
+}
+
+
+```
+
+```{r}
+# błąd treningowy dla cv=7
+training_error_EN7 = 0
+
+for (i in c(1:length(RMSE_EN7))){
+  training_error_EN7 = training_error_EN7 + as.numeric(RMSE_EN7[i])
+}
+training_error_EN7 = training_error_EN7/length(RMSE_EN7)
+training_error_EN7
+
+```
+
+```{r}
+# Otrzymujemy błąd walidacyjny równy 0.5195003 oraz błąd treningowy równy 0.4651944
+
+```
+
+```{r}
+# Las losowy dla podziału na 7 podzbiorów
+# Rozważane w siatce hiperparametry to liczba drzew w lesie (250,500,1000), minimalny rozmiar liścia  (3,5,10), mtry (60,90,120)
+# Niestety bezpośrednio do siatki nie udało mi się dodać hiperparametrów o liczbie drzew, stąd otrzymujemy 3 najlepsze modele
+# Z nich ręcznie wybiorę jeden najlepszy
+
+storeRF7 <- list()
+
+for (i in c(250,500,1000)){
+  random_forest7 <- train(skal_train, y_train$Expected, method = "ranger", 
+                          tuneGrid = expand.grid(.splitrule = "variance", .min.node.size = c(3,5,10), .mtry = c(60,90,120)), trControl = cv_7, num.trees = i)
+  key <- toString(i)
+  storeRF7[[key]] <- random_forest7
+}
+
+
+```
+
+```{r}
+storeRF7[1]
+storeRF7[2]
+storeRF7[3]
+
+```
+
+```{r}
+# Wybieram model z 500 drzewami ze względu na niższe RMSE walidacyjne
+
+```
+
+```{r}
+# wyznaczam błąd treningowy dla wybranego w siatce najlepszego modelu (n = 500, mtry = 120, min.node.size = 3), dla cv=7
+RMSE_RF7 <- list()
+
+for (i in folds7){
+  prediction <- predict(storeRF7[[2]], skal_train[i,])
+  trainRMSE <- sqrt(mean((y_train[i,]$Expected - prediction)^2))
+  key <- toString(i)
+  RMSE_RF7[[key]] <- trainRMSE
+  #trainRMSE
+}
+
+
+```
+
+```{r}
+# błąd treningowy dla cv=7
+training_error_RF7 = 0
+
+for (i in c(1:length(RMSE_RF7))){
+  training_error_RF7 = training_error_RF7 + as.numeric(RMSE_RF7[i])
+}
+training_error_RF7 = training_error_RF7/length(RMSE_RF7)
+training_error_RF7
+
+```
+
+```{r}
+# Przygotowuję dane do modelu referencyjnego
+srednia_ref <- mean(y_train$Expected)
+prediction_ref <- rep(srednia_ref,3794)
+prediction_ref <- data.frame(prediction_ref)
+
+
+
+```
+
+```{r}
+# wyznaczam błąd treningowy dla modelu referencyjnego dla cv=7
+RMSE_train_ref <- list()
+
+for (i in folds7){
+  #prediction <- predict(storeRF7[[2]], skal_train[i,])
+  trainRMSE <- sqrt(mean((y_train[i,]$Expected - srednia_ref)^2))
+  key <- toString(i)
+  RMSE_train_ref[[key]] <- trainRMSE
+  #trainRMSE
+}
+
+
+```
+
+```{r}
+# błąd treningowy dla cv=7
+training_error_ref = 0
+
+for (i in c(1:length(RMSE_train_ref))){
+  training_error_ref = training_error_ref + as.numeric(RMSE_train_ref[i])
+}
+training_error_ref = training_error_ref/length(RMSE_train_ref)
+training_error_ref
+
+```
+
+```{r}
+# wyznaczam błąd walidacyjny dla modelu referencyjnego dla cv=7
+RMSE_valid_ref <- list()
+
+for (i in folds7){
+  #prediction <- predict(storeRF7[[2]], skal_train[i,])
+  validRMSE <- sqrt(mean((y_train[-i,]$Expected - srednia_ref)^2))
+  key <- toString(i)
+  RMSE_valid_ref[[key]] <- validRMSE
+  #trainRMSE
+}
+
+
+```
+
+```{r}
+# błąd walidacyjny dla cv=7
+valid_error_ref = 0
+
+for (i in c(1:length(RMSE_valid_ref))){
+  valid_error_ref = valid_error_ref + as.numeric(RMSE_valid_ref[i])
+}
+valid_error_ref = valid_error_ref/length(RMSE_valid_ref)
+valid_error_ref
+
+```
+
+
+```{r}
+# # wyznaczam błąd MAE dla modelu referencyjnego dla cv=7
+MAE_valid_ref <- list()
+
+for (i in folds7){
+  #prediction <- predict(storeRF7[[2]], skal_train[i,])
+  validMAE <- mae(y_train[-1,]$Expected, prediction_ref[-1,])
+  key <- toString(i)
+  MAE_valid_ref[[key]] <- validMAE
+  #trainRMSE
+}
+
+
+```
+
+```{r}
+# błąd MAE dla cv=7
+valid_MAE_ref = 0
+
+for (i in c(1:length(MAE_valid_ref))){
+  valid_MAE_ref = valid_MAE_ref + as.numeric(MAE_valid_ref[i])
+}
+valid_MAE_ref = valid_MAE_ref/length(MAE_valid_ref)
+valid_MAE_ref
+
+```
+
+```{r}
+# Statystyki R^2 dla modelu referencyjnego nie wyznaczyłem ze względu na odchylenie standardowe równe 0
+# W tabeli wartość statystyki R^2 dla modelu referencyjnego oznaczę sztucznie jako -1000
+
+```
+
+```{r}
+# Porównanie najlepszego elastic net, najlepszego random forest oraz modelu referencyjnego
+
+porownanie <- data.frame(model = c("ElasticNet", "RandomForest", "Referencyjny"),
+                         RMSE_valid = c(0.5195003,0.5148365,2.3901906),
+                         Rsquared = c(0.9530501,0.9542303,-1000),
+                         MAE = c(0.3877961,0.3740658,2.0109136),
+                         RMSE_train = c(0.4651944,0.1951423,2.3902386))
+
+porownanie
+
+```
+
+```{r}
+# Otrzymujemy, że spośród tych trzech modeli najgorszym jest zdecydowanie model referencyjny - znacznie wyższe błędy treningowe i walidacyjne oraz MAE względem reszty modeli
+# Najlepszym modelem okazuje się być Random Forest dla 500 drzew, mtry = 120, min.node.size = 3 - niższy jest błąd walidacyjny, wyższa wartość statystyki R^2, niższe MAE i zdecydowanie niższy błąd treningowy względem Elastic Net dla alpha = 0.1, lambda = 0.2
+
+```

@@ -1,0 +1,135 @@
+---
+title: "430263_raport"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+#Potrzebne biblioteki
+library(ggplot2)
+library(glmnet)
+library(caret)
+library(randomForest)
+library(ranger)
+library(Metrics)
+```
+
+```{r}
+X_train <- read.csv(file="X_train.csv", sep=",", header=T)
+y_train <- read.csv(file="y_train.csv", sep=",", header=T)
+X_test <- read.csv(file="X_test.csv", sep=",", header=T)
+
+```
+
+```{r}
+# trendsetting zmiennych zbioru treningowego
+col_train <- ncol(X_train)
+print("Liczba zmiennych zbioru treningowego:")
+col_train
+
+# Liczba obserwacji zbioru treningowego
+row_train <- nrow(X_train)
+print("Liczba obserwacji zbioru treningowego:")
+row_train
+
+# Liczba zmiennych zbioru testowego
+col_test <- ncol(X_test)
+print("Liczba zmiennych zbioru testowego:")
+col_test
+
+# Liczba obserwacji zbioru testowego
+row_test <- nrow(X_test)
+print("Liczba obserwacji zbioru testowego:")
+row_test
+
+# Sprawdzam występowanie braków w danych
+X_train[!complete.cases(X_train),]
+y_train[!complete.cases(y_train),]
+X_test[!complete.cases(X_test),]
+
+# Sprawdzam występowanie ujemnych danych
+which((apply(X_train, 2, min) < 0) == TRUE)
+which((apply(X_test, 2, min) < 0) == TRUE)
+
+# Skalowanie danych
+sd_train <- lapply(X_train, sd)
+skal_train <- X_train/sd_train
+skal_test <- X_test/sd_train
+
+```
+
+```{r}
+# Mamy 9000 zmiennych w zbiorze treningowym i testowym, 3794 obserwacji zbioru treningowego i 670 obserwacji w zbiorze testowym
+# Dane są kompletne
+# Zdecydowałem się na przeskalowanie danych, za duzo zmiennych, żeby dobrze stwierdzić, czy zmienne są w istotnie róznych skalach, lepiej przeskalować niż tego nie robić
+# Nie zdecydowałem się na zcentrowanie danych
+
+```
+
+```{r}
+# Sprawdzam, czy rozkład jest normalny
+car::qqPlot(y_train$Expected)
+
+# Histogram
+ggplot(y_train, aes(x=Expected)) + geom_histogram(binwidth=0.25, color="black", fill="white") + labs(y = 'Ilość')
+
+# Wykres gęstości
+ggplot(y_train, aes(x=Expected)) + geom_density()
+
+# Statystyki opisowe
+summary(y_train$Expected)
+
+# wariancja
+wariancja <- var(y_train$Expected)
+wariancja
+
+# odchylenie standardowe
+odchylenie <- sd(y_train$Expected)
+odchylenie
+
+```
+
+```{r}
+# Dane nie wyglądają jakby pochodziły z jakiegoś konkretnego rozkładu
+# Wykres kwantylowy pokazuje, że zmienna objaśniana zdecydowanie nie pochodzi z rozkładu normalnego
+# Histogram i wykres gęstości wyglądają tak jakby część danych ze zmiennej objaśnianej pochodziła z rozkładu normalnego o średniej 1, a część z rozkładu normalnego o średniej 7
+# Wariancja zmiennej objaśnianej to 5.71, odchylenie standardowe to 2.39
+# Pozostałe statystyki opisowe wyświetliła funkcja summary
+
+```
+
+```{r}
+# Wyznaczam korelacje między zmienną objasnianą i resztą zmiennych
+y_train.matrix <- as.matrix(y_train$Expected)
+skal_train.matrix <- as.matrix(skal_train)
+korelacja <- cor(y_train.matrix, skal_train.matrix, method = "kendall")
+korelacja[1:9000]
+
+```
+
+```{r}
+# Wybieram 250 najbardziej skorelowanych zmiennych ze zmienną objaśnianą
+abs_korelacja <- sapply(korelacja, abs)
+
+# Numery wybranych kolumn
+nmax <- tail(order(abs_korelacja), 250)
+nmax
+
+```
+
+```{r}
+# Dla wybranych 250 zmiennych wyznaczam korelacje między tymi zmiennymi
+korelacja2 <- cor(skal_train.matrix[,nmax], method = "kendall")
+korelacja2
+
+```
+
+```{r}
+# Mapa ciepła
+heatmap(korelacja2)
+
+```
+
+
+
